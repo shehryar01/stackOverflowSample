@@ -1,0 +1,110 @@
+    ///This will retrieve all of the objects in the db that will be used in the homepage tableview
+    func getDB(view: UIView){
+        guard let realm = RealmX else { //incase the instantiation fails, we will tell the user
+            print("Realm could not retrieve db data in retrieveAllDbObjects function inside HomePageModel")
+            view.makeToast("Database could not be retrieved, please restart the application")
+            return
+        }
+        
+        let data = realm.objects(BoxObj.self)  //will give all objects in db
+        
+        let count = data.count
+        
+        guard count != 0 else {
+            print("There are no elements in the database rightnow, exiting from retrieveAllDbObjects func")
+            return
+        }
+        
+        print("The database has \(count) elements")
+        
+        for i in 0...count-1{
+            dg1.enter()
+            urlArr.append(data[i].ip)
+            portArr.append(String(data[i].port))
+            usernameArr.append(data[i].username)
+            passwordArr.append(data[i].password)
+            idArr.append(String(data[i].id))
+            licPlateArr.append(data[i].licPlate)
+            print(portArr[i], "DG1")
+            dg1.leave()
+        }
+        dg1.notify(queue: .main) { [weak self] in
+            print("DG1 finished")
+            //do next work\
+
+            self?.getSID(view: view)
+        }
+        
+    }
+
+
+    
+    
+    func getSID(view: UIView){
+        //loop and use dispatch group to wait for all sids to come back, then when its done do the next procedure i.e. getting state
+        let count = urlArr.count - 1
+        guard count >= 0 else {return}
+        
+        for i in 0...count{
+            dg2.enter()
+            getSIDRequest(view: view, url: urlArr[i], port: portArr[i], username: usernameArr[i], password: passwordArr[i], id: idArr[i])
+        }
+        dg2.notify(queue: .main) { [weak self] in
+            print("DG2 finished")
+            self?.getStates()
+        }
+        
+    }
+    
+
+
+
+
+
+  
+    func getStates(){
+        
+        //Once you get the cells, you add it to the class's data obj, you need to give it to return it on boxs in homepage and then reload
+
+        data.removeAll()
+        
+        let count = urlArr.count - 1
+        guard count >= 0 else {return}
+        
+        
+        for i in 0...count{
+            dg3.enter()
+            getValues(url: urlArr[i], port: portArr[i], username: usernameArr[i], password: passwordArr[i], sid: sidArr[i], plate: licPlateArr[i])
+        }
+        
+        dg3.notify(queue: .main) { [weak self] in
+            guard let strongSelf = self else {return}
+            boxes = strongSelf.data
+
+            guard self?.renderingFlag == true else {self?.getStates();print("jammed");return}
+            print("forwarded")
+            let imageDataDict:[ String : [HomePageTableData] ] = ["data": strongSelf.data]
+            let name = Notification.Name(Constants.backUpdate)
+            NotificationCenter.default.post(name: name, object: nil, userInfo: imageDataDict)
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + strongSelf.cycleTime) {
+                self?.getStates()
+                
+
+            }
+            self?.helloX()
+        }
+        
+    }
+
+
+
+THEN IN VIEWCONTROLLER VIEW DID APPEAR:
+
+        UpdatedStateBackend.shared.getDB(view: view)
+
+
+registry:
+        Before the 'UpdatedStateBackend.shared.getDB(view: view)' call
+        let notiX = Notification.Name(Constants.backUpdate)
+        NotificationCenter.default.addObserver(self, selector: #selector(showSpinningWheel(_:)), name:notiX, object: nil)
