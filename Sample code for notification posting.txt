@@ -1,3 +1,37 @@
+   class UpdatedStateBackend{
+    
+    var data = [HomePageTableData]()
+    
+    let RealmX = try? Realm()    //make realm DB
+    let timeOutInterval = TimeInterval(3.5)
+    let cycleTime = TimeInterval(3)
+    
+    
+    var renderingFlag = true
+    
+    /* db elements needed for networking are: url, port, username, password */
+    
+    var urlArr = [String]()
+    var portArr = [String]()
+    var usernameArr = [String]()
+    var passwordArr = [String]()
+    var licPlateArr = [String]()
+    var idArr = [String]()
+    var sidArr = [String]()
+    
+    let dg1 = DispatchGroup()
+    let dg2 = DispatchGroup()
+    let dg3 = DispatchGroup()
+    
+    var backTableView = UITableView()
+    var backLabel = UILabel()
+    var backStack = UIStackView()
+    var backHeight = NSLayoutConstraint()
+    static var shared = UpdatedStateBackend()
+    private init(){}
+    // MARK: - Step 1 -  get db elements
+    
+    
     ///This will retrieve all of the objects in the db that will be used in the homepage tableview
     func getDB(view: UIView){
         guard let realm = RealmX else { //incase the instantiation fails, we will tell the user
@@ -34,10 +68,21 @@
 
             self?.getSID(view: view)
         }
-        
+        helloX()
     }
+    
+    func helloX(){
+            let imageDataDict:[String: String] = ["image": "hi"]
 
+             // post a notification
+             NotificationCenter.default.post(name: NSNotification.Name(rawValue: "notificationName"), object: nil, userInfo: imageDataDict)
+             // `default` is now a property, not a method call
+            print("here")
 
+            
+    }
+    
+    // MARK: - Step 2 - From retrieved DB get sids for box(es)
     
     
     func getSID(view: UIView){
@@ -53,15 +98,51 @@
             print("DG2 finished")
             self?.getStates()
         }
-        
+        helloX()
     }
     
-
-
-
-
-
-  
+    
+    //Get the sid of the elements & notify is there is any element that is offline
+    func getSIDRequest(view: UIView, url: String, port: String, username: String, password: String, id: String){
+        DispatchQueue.global(qos: .background).async {[weak self] in
+            guard let strongSelf = self else {return}
+            
+            AF.request("http://"+url+":"+port+"/snhttp-01?Command=GetStatus&SID=0", method: .get, requestModifier:  { $0.timeoutInterval = strongSelf.timeOutInterval }) /* { $0.timeoutInterval = 5 }*/
+                .authenticate(username: username, password: password)
+                .response { [weak self] response in
+                    
+                    guard let safeData = response.data else {self?.toaster(msgColour: .white, titleColour: .systemYellow, msgText: "Box \(id) was unreachable", TitleText: "Box Offline", view: view);print("time-out for getSIDRequest for port->",port);
+                        let uIdx = self?.urlArr.firstIndex(of: url);
+                        let pIdx = self?.portArr.firstIndex(of: port);
+                        let userIdx = self?.usernameArr.firstIndex(of: username);
+                        let passIdx = self?.passwordArr.firstIndex(of: password);
+                        let idIdx = self?.idArr.firstIndex(of: id);
+                        
+                        self?.idArr.remove(at: idIdx!);
+                        self?.urlArr.remove(at: uIdx!);
+                        self?.portArr.remove(at: pIdx!);
+                        self?.usernameArr.remove(at: userIdx!);
+                        self?.passwordArr.remove(at: passIdx!);self?.dg2.leave();return}
+                    
+                    
+                    
+                    
+                    let xml = XML.parse(safeData)
+                    
+                    let sid = xml.Response.SID.text ?? "0"
+                    strongSelf.sidArr.append(sid)
+                    
+                    strongSelf.dg2.leave()
+                }
+        }
+    }
+    
+    
+    
+    // MARK: - Step 3 - With retrieved SID, start fetching states
+    
+    
+    
     func getStates(){
         
         //Once you get the cells, you add it to the class's data obj, you need to give it to return it on boxs in homepage and then reload
@@ -94,8 +175,220 @@
             }
             self?.helloX()
         }
+        helloX()
+    }
+    
+    
+    
+    func getValues(url: String, port: String, username: String, password: String, sid: String, plate: String){
+        DispatchQueue.global(qos: .background).async { [weak self] in
+            guard let strongSelf = self else {return}
+            
+            
+            AF.request("http://"+url+":"+port+"/snhttp-01?Command=GetStatus&SID=\(sid)", method: .get, requestModifier: { $0.timeoutInterval = strongSelf.timeOutInterval })
+                .authenticate(username: username, password: password)
+                .response{ [weak self] response in
+                    
+                    guard let safeData = response.data else {self?.dg3.leave(); return}
+                    
+                    // things to get: ID, GPIO states, Action state, State state
+                    
+                    let xml = XML.parse(safeData)
+                    
+                    //**ID**
+                    let id = xml.Response.Box.ID.text ?? "Error"
+                    
+                    
+                    //**GPIO states**
+                    
+                    var door = ""
+                    var trunk = ""
+                    var ignition = ""
+                    var battery = ""
+                    var in1 = ""
+                    var in2 = ""
+                    
+                    let boxState = xml.Response.Box.State.text ?? ""
+                    let status = xml.Response.Status.text ?? ""
+                    
+                    let decimalState = StatusLogicalANDtester.singletonStatusLogicalANDtester.hexToDecimal(hexadecimal: boxState) ?? 0
+                    
+                    let d = (decimalState & DOOR) == DOOR
+                    if d {
+                        door = "Opened"
+                    }else{
+                        door = "Closed"
+                    }
+                    
+                    
+                    let t = (decimalState & TRUNK) == TRUNK
+                    if t {
+                        trunk = "Opened"
+                    }else{
+                        trunk = "Closed"
+                    }
+                    
+                    
+                    let ig = (decimalState & IGNITION) == IGNITION
+                    if ig {
+                        ignition = "Opened"
+                    }else{
+                        ignition = "Closed"
+                    }
+                    
+                    
+                    let bat = (decimalState & BACKUP_BATTERY) == BACKUP_BATTERY
+                    if bat {
+                        battery = "Prim & Bkup"
+                    }else{
+                        battery = "Primary"
+                    }
+                    
+                    
+                    let i1 = (decimalState & USER_INPUT_1) == USER_INPUT_1
+                    if i1 {
+                        in1 = "On"
+                    }else{
+                        in1 = "Off"
+                    }
+                    
+                    
+                    let i2 = (decimalState & USER_INPUT_2) == USER_INPUT_2
+                    if i2 {
+                        in2  = "On"
+                    }else{
+                        in2 = "Off"
+                    }
+                    
+                    
+                    
+                    //**Action**
+                    
+                    var myStatusState = StatusLogicalANDtester.singletonStatusLogicalANDtester.getAction(value: status)
+                    
+                    let action = xml.Response.Testing.IsMine.text
+                    let activation = xml.Response.Activation.IsMine.text ?? ""
+                    
+                    
+                    if myStatusState == "End Call"{
+                        
+                        switch activation{
+                        case "0":
+                            myStatusState = "Retrieve A"
+                        case "1":
+                            myStatusState = "End Call A"
+                        default:
+                            myStatusState = "End Call A"
+                        }
+                    }else if myStatusState == "Testing"{
+                        
+                        switch action{
+                        case "0":
+                            myStatusState = "Retrieve"
+                        case "1":
+                            myStatusState = "End Call"
+                        default:
+                            myStatusState = "Test"
+                        }
+                    }
+                    
+                    
+                    
+                    
+                    //**State**
+                    
+                    let decimalStatus = StatusLogicalANDtester.singletonStatusLogicalANDtester.hexToDecimal(hexadecimal: status) ?? 0
+                    
+                    
+                    var state = ""
+                    
+                    let stateCheck = decimalStatus & ARMED
+                    
+                    if stateCheck == ARMED{
+                        state = "Armed"
+                    }else{
+                        state = "Disarmed"
+                    }
+                    
+                    
+                    //********Now give the values to the cell*********
+                    
+                    let cell = HomePageTableData(id: id, door: door, trunk: trunk, ignition: ignition, battery: battery, input1: in1, input2: in2, licPlate: plate, stateLabel: state, actionLabel: myStatusState)
+                    
+                    self?.data.append(cell)
+                    
+                    self?.dg3.leave()
+                }
+        }
         
     }
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    // MARK: - Helpers
+    
+    
+    func toaster(msgColour: UIColor?, titleColour: UIColor?, msgText: String?, TitleText: String?, view: UIView ){
+        var style = ToastStyle()
+        ToastManager.shared.isQueueEnabled = true
+
+        var msgClr = UIColor.white
+        var titleClr = UIColor.white
+        var msgTxt = ""
+        var titleTxt = ""
+        
+        if let mC = msgColour{
+            msgClr = mC
+        }
+        
+        if let tC = titleColour{
+            titleClr = tC
+        }
+        
+        if let mT = msgText{
+            msgTxt = mT
+        }
+        
+        if let tT = TitleText{
+            titleTxt = tT
+        }
+        
+        style.messageColor = msgClr
+        style.titleColor = titleClr
+        
+        view.makeToast(msgTxt, duration: 5, position: .bottom, title: titleTxt, image: nil, style: style, completion: nil)
+        
+        
+        
+    }
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    /*
+     make toast queable
+     */
+    
+    
+    
+}
+
+
 
 
 
